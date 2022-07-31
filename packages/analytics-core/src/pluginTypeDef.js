@@ -10,3 +10,11 @@
   * @property {function} [loaded] - Function to determine if analytics script loaded
   * @property {function} [ready] - Fire function when plugin ready
   */
+
+/**
+  * @typedef {Object} AnalyticsPluginState
+  * @property {boolean} enabled
+  * @property {boolean} initialized
+  * @property {boolean} loaded
+  * @property {Object}  config
+  */
