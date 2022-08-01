@@ -276,31 +276,57 @@ function analytics(config = {}) {
           [`${initializedNewPlugin.name}`]: initializedNewPlugin
         })
 
-        // Object.assign(this, pluginMethods);
+        if (initializedNewPlugin.methods) {
+          const pluginMethods = Object.keys(initializedNewPlugin.methods).reduce((a, c) => {
+            // Due to dynamic nature to prevent prototype pollution exploit check for the proto key
+            if (c === "__proto__") {
+              return a; // Skip the key
+            }
+            // enrich methods with analytics instance
+            a[c] = appendArguments(initializedNewPlugin.methods[c])
+            return a
+          }, {})
+          // Remove additional methods from plugins
+          initializedNewPlugin.methods = undefined;
 
-        // then add it, and init state key
+          // Due to this utilizing an arrow function must specify plugins parent object!
+          Object.assign(plugins, pluginMethods);
+        }
+
+        // then add it, and init state key 
         store.dispatch({
           type: EVENTS.registerPluginType(initializedNewPlugin.name),
           name: initializedNewPlugin.name,
           enabled: initializedNewPlugin.enabled,
           plugin: initializedNewPlugin,
-        })
+        });
 
-        if (initializedNewPlugin.enabled) {
-          store.dispatch(
-            {
-              type: EVENTS.enablePlugin,
-              plugins: [initializedNewPlugin.name],
-              _: { originalAction: EVENTS.enablePlugin }
-            },
-            res,
-            [callback]
-          )
-        } else {
-          // Since the plugin was not enabled just want to confirm it was added
-          callback && callback(true)
-          res(true)
-        }
+        // TODO: Will need to add support for customEvents from plugins into middleware for full feature parity
+
+        // I have no problem swapping this out for addMiddle and removeMiddle directly, but it would look very similar
+        const removeOn = instance.on(`registerPlugin:${initializedNewPlugin.name}`, ({ payload }) => {
+          if (payload.name !== initializedNewPlugin.name) {
+            return;
+          }
+          
+          // Cleaning up the listener, can't trust once fully 
+          removeOn();
+          if (initializedNewPlugin.enabled) {
+            store.dispatch(
+              {
+                type: EVENTS.initializeStart,
+                plugins: [initializedNewPlugin.name],
+                disabled: [],
+              },
+              res,
+              [callback]
+            )
+          } else {
+            // Since the plugin was not enabled just want to confirm it was added
+            callback && callback(true)
+            res(true)
+          }
+        });
       })
     },
     // Merge in custom plugin methods
@@ -907,7 +933,6 @@ function analytics(config = {}) {
   const initialConfig = makeContext(config)
 
   const intialPluginState = parsedOptions.pluginsArray.reduce((acc, plugin) => {
-    console.log(plugin)
     const { name, config, loaded } = plugin
     const isEnabled = parsedOptions.pluginEnabled[name]
     acc[name] = {

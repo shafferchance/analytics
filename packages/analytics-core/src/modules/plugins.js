@@ -111,6 +111,8 @@ function togglePluginStatus(plugins, status, currentState) {
   const enabledFromPluginConfig = plugin.config.enabled !== false
   plugin.enabled = enabledFromMerge && enabledFromPluginConfig
 
+  plugin.initialized = plugin.enabled ? Boolean(!plugin.initialize) : false;
+
   if (!plugin.loaded) {
     plugin.loaded = () => true
   }
