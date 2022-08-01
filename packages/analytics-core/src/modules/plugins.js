@@ -92,3 +92,30 @@ function togglePluginStatus(plugins, status, currentState) {
     return acc
   }, currentState)
 }
+
+/**
+ * Will create an analytics plugin initial state for the store
+ *
+ * @param {AnalyticsPlugin} plugin
+ *
+ * @returns {AnalyticsPluginState}
+ */
+ export function initializePluginState(plugin) {
+  if (plugin.NAMESPACE) plugin.name = plugin.NAMESPACE
+  if (!plugin.name) {
+    throw new Error(ERROR_URL + "1")
+  }
+  if (!plugin.config) plugin.config = {}
+
+  const enabledFromMerge = plugin.enabled !== false
+  const enabledFromPluginConfig = plugin.config.enabled !== false
+  plugin.enabled = enabledFromMerge && enabledFromPluginConfig
+
+  plugin.initialized = plugin.enabled ? Boolean(!plugin.initialize) : false;
+
+  if (!plugin.loaded) {
+    plugin.loaded = () => true
+  }
+
+  return plugin
+}

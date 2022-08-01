@@ -9,7 +9,7 @@ import EVENTS, { coreEvents, nonEvents, isReservedAction } from './events'
 import * as middleware from './middleware'
 import DynamicMiddleware from './middleware/dynamic'
 // Modules
-import pluginsMiddleware from './modules/plugins'
+import pluginsMiddleware, { initializePluginState } from './modules/plugins'
 import track from './modules/track'
 import queue from './modules/queue'
 import page, { getPageData } from './modules/page'
@@ -62,32 +62,26 @@ function analytics(config = {}) {
   // if (SERVER) {
   //   console.log('INIT SERVER')
   // }
-  
+
   /* Parse plugins array */
   const parsedOptions = (config.plugins || []).reduce((acc, plugin) => {
     if (isFunction(plugin)) {
       /* Custom redux middleware */
-      acc.middlewares = acc.middlewares.concat(plugin)
-      return acc
+      acc.middlewares = acc.middlewares.concat(plugin);
+      return acc;
     }
     // Legacy plugin with name
-    if (plugin.NAMESPACE) plugin.name = plugin.NAMESPACE
-    if (!plugin.name) {
-      /* Plugins must supply a "name" property. See error url for more details */
-      throw new Error(ERROR_URL + '1')
-    }
+    // if (plugin.NAMESPACE) plugin.name = plugin.NAMESPACE;
+    // if (!plugin.name) {
+    //   /* Plugins must supply a "name" property. See error url for more details */
+    //   throw new Error(ERROR_URL + "1");
+    // }
     // Set config if empty
-    if (!plugin.config) plugin.config = {}
+    // if (!plugin.config) plugin.config = {};
     // if plugin exposes EVENTS capture available events
     const definedEvents = (plugin.EVENTS) ? Object.keys(plugin.EVENTS).map((k) => {
       return plugin.EVENTS[k]
     }) : []
-
-    const enabledFromMerge = !(plugin.enabled === false)
-    const enabledFromPluginConfig = !(plugin.config.enabled === false)
-    // top level { enabled: false } takes presidence over { config: enabled: false }
-    acc.pluginEnabled[plugin.name] = enabledFromMerge && enabledFromPluginConfig
-    delete plugin.enabled
 
     if (plugin.methods) {
       acc.methods[plugin.name] = Object.keys(plugin.methods).reduce((a, c) => {
@@ -96,8 +90,18 @@ function analytics(config = {}) {
         return a
       }, {})
       // Remove additional methods from plugins
-      delete plugin.methods
+      plugin.methods = undefined;
     }
+
+    const convertedPlugin = initializePluginState(plugin);
+
+    // const enabledFromMerge = !(plugin.enabled === false);
+    // const enabledFromPluginConfig = !(plugin.config.enabled === false);
+    // top level { enabled: false } takes presidence over { config: enabled: false }
+    // The check for presidence of enabled is done within initializePluginState
+    acc.pluginEnabled[plugin.name] = plugin.enabled;
+    plugin.enabled = undefined;
+
     // Convert available methods into events
     const methodsToEvents = Object.keys(plugin)
     // Combine events
@@ -111,11 +115,8 @@ function analytics(config = {}) {
     if (acc.plugins[plugin.name]) {
       throw new Error(plugin.name + 'AlreadyLoaded')
     }
-    acc.plugins[plugin.name] = plugin
-    if (!acc.plugins[plugin.name].loaded) {
-      // set default loaded func
-      acc.plugins[plugin.name].loaded = () => true
-    }
+
+    acc.plugins[plugin.name] = convertedPlugin
     return acc
   }, {
     plugins: {},
@@ -258,23 +259,79 @@ function analytics(config = {}) {
       })
     },
     */
-    /* @TODO if it stays, state loaded needs to be set. Re PLUGIN_INIT above
-    add: (newPlugin) => {
-      if (typeof newPlugin !== 'object') return false
-      // Set on global integration object
-      customPlugins = Object.assign({}, customPlugins, {
-        [`${newPlugin.name}`]: newPlugin
+    // @TODO if it stays, state loaded needs to be set. Re PLUGIN_INIT above
+    /**
+     * Add analytics plugin
+     * @typedef {Function} AddPlugin
+     * @param {AnalyticsPlugin} newPlugin
+     * @returns
+     */
+    add: (newPlugin, callback) => {
+      return new Promise((res) => {
+        if (typeof newPlugin !== "object") res(false)
+
+        const initializedNewPlugin = initializePluginState(newPlugin)
+        // Set on global integration object
+        customPlugins = Object.assign({}, customPlugins, {
+          [`${initializedNewPlugin.name}`]: initializedNewPlugin
+        })
+
+        if (initializedNewPlugin.methods) {
+          const pluginMethods = Object.keys(initializedNewPlugin.methods).reduce((a, c) => {
+            // Due to dynamic nature to prevent prototype pollution exploit check for the proto key
+            if (c === "__proto__") {
+              return a; // Skip the key
+            }
+            // enrich methods with analytics instance
+            a[c] = appendArguments(initializedNewPlugin.methods[c])
+            return a
+          }, {})
+          // Remove additional methods from plugins
+          initializedNewPlugin.methods = undefined;
+
+          // Due to this utilizing an arrow function must specify plugins parent object!
+          Object.assign(plugins, pluginMethods);
+        }
+
+        // then add it, and init state key 
+        store.dispatch({
+          type: EVENTS.registerPluginType(initializedNewPlugin.name),
+          name: initializedNewPlugin.name,
+          enabled: initializedNewPlugin.enabled,
+          plugin: initializedNewPlugin,
+        });
+
+        // TODO: Will need to add support for customEvents from plugins into middleware for full feature parity
+
+        // I have no problem swapping this out for addMiddle and removeMiddle directly, but it would look very similar
+        const removeOn = instance.on(`registerPlugin:${initializedNewPlugin.name}`, ({ payload }) => {
+          if (payload.name !== initializedNewPlugin.name) {
+            return;
+          }
+          
+          // Cleaning up the listener, can't trust once fully 
+          removeOn();
+          if (initializedNewPlugin.enabled) {
+            store.dispatch(
+              {
+                type: EVENTS.initializeStart,
+                plugins: [initializedNewPlugin.name],
+                disabled: [],
+              },
+              res,
+              [callback]
+            )
+          } else {
+            // Since the plugin was not enabled just want to confirm it was added
+            callback && callback(true)
+            res(true)
+          }
+        });
       })
-      // then add it, and init state key
-      store.dispatch({
-        type: EVENTS.pluginRegister,
-        name: newPlugin.name,
-        plugin: newPlugin
-      })
-    }, */
+    },
     // Merge in custom plugin methods
-    ...parsedOptions.methods
-  }
+    ...parsedOptions.methods,
+  };
   
   let readyCalled = false
   /**
@@ -294,48 +351,48 @@ function analytics(config = {}) {
    */
   const instance = {
     /**
-    * Identify a user. This will trigger `identify` calls in any installed plugins and will set user data in localStorage
-    * @typedef {Function} Identify
-    * @param  {String}   userId  - Unique ID of user
-    * @param  {Object}   [traits]  - Object of user traits
-    * @param  {Object}   [options] - Options to pass to identify call
-    * @param  {Function} [callback] - Callback function after identify completes
-    * @returns {Promise}
-    * @api public
-    *
-    * @example
-    *
-    * // Basic user id identify
-    * analytics.identify('xyz-123')
-    *
-    * // Identify with additional traits
-    * analytics.identify('xyz-123', {
-    *   name: 'steve',
-    *   company: 'hello-clicky'
-    * })
-    *
-    * // Fire callback with 2nd or 3rd argument
-    * analytics.identify('xyz-123', () => {
-    *   console.log('do this after identify')
-    * })
-    *
-    * // Disable sending user data to specific analytic tools
-    * analytics.identify('xyz-123', {}, {
-    *   plugins: {
-    *     // disable sending this identify call to segment
-    *     segment: false
-    *   }
-    * })
-    *
-    * // Send user data to only to specific analytic tools
-    * analytics.identify('xyz-123', {}, {
-    *   plugins: {
-    *     // disable this specific identify in all plugins except customerio
-    *     all: false,
-    *     customerio: true
-    *   }
-    * })
-    */
+     * Identify a user. This will trigger `identify` calls in any installed plugins and will set user data in localStorage
+     * @typedef {Function} Identify
+     * @param  {String}   userId  - Unique ID of user
+     * @param  {Object}   [traits]  - Object of user traits
+     * @param  {Object}   [options] - Options to pass to identify call
+     * @param  {Function} [callback] - Callback function after identify completes
+     * @returns {Promise}
+     * @api public
+     *
+     * @example
+     *
+     * // Basic user id identify
+     * analytics.identify('xyz-123')
+     *
+     * // Identify with additional traits
+     * analytics.identify('xyz-123', {
+     *   name: 'steve',
+     *   company: 'hello-clicky'
+     * })
+     *
+     * // Fire callback with 2nd or 3rd argument
+     * analytics.identify('xyz-123', () => {
+     *   console.log('do this after identify')
+     * })
+     *
+     * // Disable sending user data to specific analytic tools
+     * analytics.identify('xyz-123', {}, {
+     *   plugins: {
+     *     // disable sending this identify call to segment
+     *     segment: false
+     *   }
+     * })
+     *
+     * // Send user data to only to specific analytic tools
+     * analytics.identify('xyz-123', {}, {
+     *   plugins: {
+     *     // disable this specific identify in all plugins except customerio
+     *     all: false,
+     *     customerio: true
+     *   }
+     * })
+     */
     identify: async (userId, traits, options, callback) => {
       const id = isString(userId) ? userId : null
       const data = isObject(userId) ? userId : traits
@@ -585,7 +642,7 @@ function analytics(config = {}) {
       }
       const startRegex = /Start$|Start:/
       if (name === '*') {
-        const beforeHandler = store => next => action => {
+        const beforeHandler = (store) => (next) => (action) => {
           if (action.type.match(startRegex)) {
             callback({ // eslint-disable-line
               payload: action,
@@ -595,7 +652,7 @@ function analytics(config = {}) {
           }
           return next(action)
         }
-        const afterHandler = store => next => action => {
+        const afterHandler = (store) => (next) => (action) => {
           if (!action.type.match(startRegex)) {
             callback({ // eslint-disable-line
               payload: action,
