@@ -1,4 +1,4 @@
-import { Analytics, EVENTS, CONSTANTS } from '@analytics/core'
+import { Analytics, EVENTS, CONSTANTS } from '@lululemon/analytics-core'
 import storage from '@analytics/storage-utils'
 
 // See ../packages/analytics-core for source code

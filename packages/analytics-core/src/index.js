@@ -184,6 +184,7 @@ function analytics(config = {}) {
    * @typedef {Object} Plugins
    * @property {EnablePlugin} enable - Set storage value
    * @property {DisablePlugin} disable - Remove storage value
+   * @property {AddPlugin} add - Add plugin dynamically
    * @example
    *
    * // Enable a plugin by namespace
@@ -191,6 +192,9 @@ function analytics(config = {}) {
    *
    * // Disable a plugin by namespace
    * analytics.plugins.disable('google-analytics')
+   * 
+   * // Addd a plugin
+   * analytics.plugins.add({ name: 'random-plugin', enabled?: true, track: () => "" })
    */
   const plugins = {
     /**
@@ -264,7 +268,8 @@ function analytics(config = {}) {
      * Add analytics plugin
      * @typedef {Function} AddPlugin
      * @param {AnalyticsPlugin} newPlugin
-     * @returns
+     * @param {Function} [callback]
+     * @returns {Promise}
      */
     add: (newPlugin, callback) => {
       return new Promise((res) => {

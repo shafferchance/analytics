@@ -62,7 +62,7 @@ const typeExtensions = `
 `;
 
 // Expose main API
-const newContent = `declare module "analytics" {
+const newContent = `declare module "@lululemon/analytics" {
 ${indentString(typesFromJsDocs, 2)}
 ${typeExtensions}
 
